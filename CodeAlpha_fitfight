@@ -1,0 +1,100 @@
+from flask import Flask, render_template, request, redirect, url_for
+import sqlite3
+from datetime import datetime
+
+app = Flask(__name__)
+
+# -----------------------------
+# Database Setup
+# -----------------------------
+def init_db():
+    conn = sqlite3.connect("fitfight_web.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL
+    )
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS activities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        date TEXT,
+        steps INTEGER,
+        workout_minutes INTEGER,
+        calories INTEGER,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# -----------------------------
+# Routes
+# -----------------------------
+@app.route("/")
+def home():
+    return render_template("index.html")
+
+@app.route("/register", methods=["POST"])
+def register():
+    username = request.form["username"]
+    conn = sqlite3.connect("fitfight_web.db")
+    cursor = conn.cursor()
+    try:
+        cursor.execute("INSERT INTO users (username) VALUES (?)", (username,))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        pass
+    conn.close()
+    return redirect(url_for("dashboard", username=username))
+
+@app.route("/log", methods=["POST"])
+def log_activity():
+    username = request.form["username"]
+    steps = int(request.form.get("steps", 0))
+    workout = int(request.form.get("workout", 0))
+    calories = int(request.form.get("calories", 0))
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    conn = sqlite3.connect("fitfight_web.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE username=?", (username,))
+    user = cursor.fetchone()
+    if user:
+        user_id = user[0]
+        cursor.execute("""
+            INSERT INTO activities (user_id, date, steps, workout_minutes, calories)
+            VALUES (?, ?, ?, ?, ?)
+        """, (user_id, today, steps, workout, calories))
+        conn.commit()
+    conn.close()
+    return redirect(url_for("dashboard", username=username))
+
+@app.route("/dashboard/<username>")
+def dashboard(username):
+    conn = sqlite3.connect("fitfight_web.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE username=?", (username,))
+    user = cursor.fetchone()
+    records = []
+    totals = {"steps":0, "workout":0, "calories":0}
+    if user:
+        user_id = user[0]
+        cursor.execute("SELECT date, steps, workout_minutes, calories FROM activities WHERE user_id=?", (user_id,))
+        records = cursor.fetchall()
+        for r in records:
+            totals["steps"] += r[1]
+            totals["workout"] += r[2]
+            totals["calories"] += r[3]
+    conn.close()
+    return render_template("dashboard.html", username=username, records=records, totals=totals)
+
+# -----------------------------
+# Run App
+# -----------------------------
+if __name__ == "__main__":
+    app.run(debug=True)
